@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>World Cup Elo Predictor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; justify-content: center; align-items: center; }
+  .card { background: #1e293b; border-radius: 16px; padding: 2rem; width: 480px; max-width: 90vw; box-shadow: 0 25px 50px rgba(0,0,0,.5); }
+  h1 { text-align: center; margin-bottom: .5rem; font-size: 1.5rem; }
+  .sub { text-align: center; color: #94a3b8; margin-bottom: 1.5rem; font-size: .875rem; }
+  .form-group { margin-bottom: 1rem; }
+  label { display: block; margin-bottom: .25rem; font-weight: 600; color: #cbd5e1; }
+  select { width: 100%; padding: .625rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; }
+  .vs { text-align: center; font-weight: 700; color: #64748b; margin: .25rem 0; }
+  button { width: 100%; padding: .75rem; border: none; border-radius: 8px; background: #3b82f6; color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer; margin-top: .5rem; transition: background .15s; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button:hover:not(:disabled) { background: #2563eb; }
+  #result { margin-top: 1.5rem; display: none; }
+  #result.show { display: block; }
+  .bar-row { display: flex; align-items: center; margin-bottom: .5rem; }
+  .bar-label { width: 100px; text-align: right; padding-right: .75rem; font-weight: 600; font-size: .875rem; }
+  .bar-track { flex: 1; height: 24px; background: #334155; border-radius: 12px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 12px; transition: width .5s ease; display: flex; align-items: center; justify-content: flex-end; padding-right: .5rem; font-size: .75rem; font-weight: 700; color: #fff; }
+  .bar-fill.team-a { background: #3b82f6; }
+  .bar-fill.draw { background: #f59e0b; }
+  .bar-fill.team-b { background: #ef4444; }
+  .bar-pct { width: 48px; text-align: right; padding-left: .5rem; font-size: .875rem; }
+  .ratings-info { margin-top: 1rem; text-align: center; font-size: .8125rem; color: #94a3b8; }
+  .error { color: #f87171; text-align: center; margin-top: 1rem; display: none; }
+  .status { text-align: center; font-size: .75rem; color: #64748b; margin-top: 1rem; }
+  .foot { text-align: center; margin-top: 1rem; font-size: .75rem; color: #475569; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1> World Cup Elo Predictor</h1>
+  <div class="sub">Basado en World Football Elo Ratings</div>
+  <div class="form-group">
+    <label for="team_a">Equipo local</label>
+    <select id="team_a"></select>
+  </div>
+  <div class="vs">VS</div>
+  <div class="form-group">
+    <label for="team_b">Equipo visitante</label>
+    <select id="team_b"></select>
+  </div>
+  <button id="predictBtn" onclick="predict()">Predecir</button>
+  <div id="result">
+    <div class="bar-row"><span class="bar-label" id="labelA">A</span><div class="bar-track"><div class="bar-fill team-a" id="barA" style="width:0%"></div></div><span class="bar-pct" id="pctA">0%</span></div>
+    <div class="bar-row"><span class="bar-label">Empate</span><div class="bar-track"><div class="bar-fill draw" id="barDraw" style="width:0%"></div></div><span class="bar-pct" id="pctDraw">0%</span></div>
+    <div class="bar-row"><span class="bar-label" id="labelB">B</span><div class="bar-track"><div class="bar-fill team-b" id="barB" style="width:0%"></div></div><span class="bar-pct" id="pctB">0%</span></div>
+    <div class="ratings-info" id="ratingsInfo"></div>
+  </div>
+  <div class="error" id="error"></div>
+  <div class="status" id="status"></div>
+  <div class="foot">2026 World Cup Predictor</div>
+</div>
+<script>
+var API_URL = "$API_URL";
+
+var TEAMS = [
+  "Algeria","Argentina","Australia","Austria","Belgium","Bosnia and Herzegovina",
+  "Brazil","Burkina Faso","Cameroon","Canada","Chile","Colombia","Croatia",
+  "Czechia","Denmark","DR Congo","Ecuador","Egypt","England","France","Germany",
+  "Ghana","Greece","Hungary","Iran","Iraq","Italy","Ivory Coast","Japan","Mali",
+  "Mexico","Morocco","Netherlands","Nigeria","Norway","Paraguay","Peru","Poland",
+  "Portugal","Qatar","Romania","Saudi Arabia","Senegal","Serbia","Slovakia",
+  "Slovenia","South Africa","South Korea","Spain","Sweden","Switzerland",
+  "Tunisia","Turkey","Ukraine","United States","Uruguay","Uzbekistan","Venezuela"
+].sort();
+
+function populateSelects() {
+  var a = document.getElementById("team_a");
+  var b = document.getElementById("team_b");
+  TEAMS.forEach(function(t) {
+    a.innerHTML += '<option value="' + t + '">' + t + '</option>';
+    b.innerHTML += '<option value="' + t + '">' + t + '</option>';
+  });
+  a.value = "Mexico";
+  b.value = TEAMS.indexOf("South Africa") >= 0 ? "South Africa" : TEAMS[1] || "";
+}
+populateSelects();
+
+async function predict() {
+  var btn = document.getElementById("predictBtn");
+  var result = document.getElementById("result");
+  var err = document.getElementById("error");
+  var status = document.getElementById("status");
+  result.classList.remove("show"); err.style.display = "none";
+  btn.disabled = true; btn.textContent = "Prediciendo...";
+  status.textContent = "Consultando endpoint SageMaker...";
+
+  var selectedA = document.getElementById("team_a").value;
+  var selectedB = document.getElementById("team_b").value;
+
+  try {
+    var res = await fetch(API_URL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({team_a: selectedA, team_b: selectedB})
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    if (data.error) { err.textContent = data.error; err.style.display = "block"; btn.disabled = false; btn.textContent = "Predecir"; status.textContent = ""; return; }
+    var p = data.probabilities;
+    var keys = Object.keys(p);
+    document.getElementById("labelA").textContent = data.team_a.name;
+    document.getElementById("labelB").textContent = data.team_b.name;
+    document.getElementById("barA").style.width = p[keys[0]] + "%";
+    document.getElementById("pctA").textContent = p[keys[0]] + "%";
+    document.getElementById("barDraw").style.width = p["draw"] + "%";
+    document.getElementById("pctDraw").textContent = p["draw"] + "%";
+    document.getElementById("barB").style.width = p[keys[2]] + "%";
+    document.getElementById("pctB").textContent = p[keys[2]] + "%";
+    document.getElementById("ratingsInfo").textContent =
+      data.team_a.name + ": " + data.team_a.rating + " Elo | " +
+      data.team_b.name + ": " + data.team_b.rating + " Elo | " +
+      (data.home_advantage > 0 ? "Local (home +70)" : "Neutral");
+    result.classList.add("show");
+    status.textContent = "Listo";
+  } catch(e) {
+    err.textContent = "Error de conexion: " + e.message + ". Verifica que el endpoint este activo.";
+    err.style.display = "block";
+    status.textContent = "Error";
+  }
+  btn.disabled = false; btn.textContent = "Predecir";
+}
+</script>
+</body>
+</html>
